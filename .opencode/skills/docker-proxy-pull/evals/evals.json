@@ -1,0 +1,29 @@
+{
+  "skill_name": "docker-proxy-pull",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "帮我通过代理下载 docker.io/ubuntu:24.04 镜像",
+      "expected_output": "使用默认代理 http://192.168.5.244:10808 通过 podman 拉取镜像，导出 tar 文件，然后用 docker load 导入",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "使用代理 http://proxy.company.com:8080 拉取 nginx:latest 镜像到 Docker",
+      "expected_output": "使用自定义代理地址通过 podman 拉取 nginx 镜像",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "docker pull redis:alpine 需要走代理",
+      "expected_output": "使用代理配置拉取 redis:alpine 镜像",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "用 HTTPS_PROXY=http://192.168.10.50:3128 下载 postgres:15 镜像",
+      "expected_output": "使用指定的 HTTPS_PROXY 环境变量拉取 postgres 镜像",
+      "files": []
+    }
+  ]
+}
