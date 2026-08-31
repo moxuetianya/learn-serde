@@ -2,6 +2,43 @@
 
 **源码参考**: `serde_core/src/de/mod.rs:945`
 
+## 为什么反序列化 JSON 必须引入 serde_json? —— serde 只是协议
+
+**核心误解**: 以为 `#[derive(Deserialize)]` 就能解析 JSON 字节。不对 ——
+derive 宏只生成了**类型侧**(`MyStruct` 怎么组装), 完全不含格式侧:
+
+| 侧 | 职责 | 谁提供 |
+|----|------|--------|
+| 类型侧 | `MyStruct::deserialize` + visitor: "字段名 x/y, 值怎么转换" | `#[derive(Deserialize)]` (serde) |
+| 格式侧 | 字节 → token (`{` `"` 数字 转义), 实现 `Deserializer` trait | 格式库 (serde_json / serde_yaml / ron / bincode ...) |
+
+`serde` 自己是一个**协议层**: 它定义了 `Deserializer`/`Visitor`/`Deserialize`
+三个接口, 但**不认识任何具体格式的语法**。JSON 的 `{"name": "a"}` 是怎么变成
+`visit_map`/`visit_str("name")` 这些调用的? serde 不知道, 只有 serde_json 知道。
+
+完整调用链:
+
+```
+serde_json::from_slice::<MyStruct>(bytes)
+ └─ serde_json 的 Deserializer 实现        ← 格式侧: 解析 JSON 语法, 生产 token
+     └─ MyStruct::deserialize(d)            ← 类型侧: derive 生成, 有 MyStruct 的知识
+         └─ d.deserialize_map(MyStructVisitor)
+             └─ visitor.visit_map(...)      ← 回到格式侧: 逐个读 key/value ...
+                 └─ map.next_value_seed(...) ← 子字段递归...
+```
+
+关于 `serde_json::Value`: 它是 serde_json 自己的**便利目标类型**(JSON 的 AST),
+你确实不需要它。但你要的是 `from_slice::<MyStruct>` 里的**解析器部分** ——
+那个实现 `Deserializer` 的 `d`, 只能来自 serde_json。
+
+验证: 仓库 `demos/examples/05_custom_deserializer.rs` 手写了一个 CSV 格式的
+`Deserializer`(CsvDeserializer + SeqAccess/MapAccess/EnumAccess), 这就是"格式侧
+自己写"的样子 —— serde 生态的接入口就是 `Deserializer` trait, 任何格式只要实现
+它就能接入 derive 的类型侧。
+
+**结论**: 想用 JSON 就必须引入一个实现了 `Deserializer` 的库(选哪个取决于格式);
+"只依赖 serde" 可行, 但前提是你自己写格式侧(见本章练习和 17-实战-自定义Deserializer)。
+
 ## Deserializer Trait 完整定义
 
 ```rust

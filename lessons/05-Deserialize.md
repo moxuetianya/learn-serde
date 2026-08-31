@@ -42,6 +42,10 @@ pub trait Deserialize<'de>: Sized {
    (告诉 visitor "这里是你想要的数据")
 ```
 
+> **注意**: 这里的 `D: Deserializer` 不来自 serde 本身 —— derive 只生成类型侧。
+> 用 JSON 时 `D` 是 serde_json 的解析器, 用 YAML 是 serde_yaml 的……格式侧必须
+> 由格式库提供 (详见第 7 章开头「为什么必须引入 serde_json」)。
+
 ### 为什么需要 Visitor?
 
 反序列化比序列化复杂,因为:
