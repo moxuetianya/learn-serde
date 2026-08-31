@@ -1,3 +1,4 @@
+#![feature(structural_match, core_intrinsics, print_internals, fmt_helpers_for_derive)]
 #![feature(prelude_import)]
 extern crate std;
 #[prelude_import]

@@ -423,6 +423,92 @@ JSON 数组: [1, 2]              → visit_seq(按顺序)
 
 ---
 
+## 看真实的展开代码: cargo expand
+
+serde_derive 真正的生成代码可以现场看,仓库里已经存了一份:
+`lessons/demos/examples/05_expand.rs`。
+
+**它是什么**: `cargo expand` 命令的输出 —— 把
+`05_custom_deserializer.rs` 里所有宏(`#[derive(...)]` 等)完全展开后的源码快照。
+
+**为什么需要 nightly 才能编译**: 展开后的代码大量引用编译器/标准库内部实现,
+文件头部已预置 4 个 feature 门,缺一不可(实测移除任一个都会报错):
+
+```rust
+#![feature(structural_match, core_intrinsics, print_internals, fmt_helpers_for_derive)]
+#![feature(prelude_import)]   // 原本就在展开输出里
+```
+
+- `structural_match` → `StructuralPartialEq`(derive PartialEq 的展开,第 407 行)
+- `core_intrinsics` / `fmt_helpers_for_derive` → derive Debug/Display 的展开
+- `print_internals` → `println!` 宏的展开
+- 此外 `_serde::__private229` 是 serde 构建期生成的公开(doc-hidden)私有模块,
+  229 是版本号后缀(见 `serde_derive/src/lib.rs` 的 `concat!("__private", ...)`),
+  只要 serde 版本与生成时一致就能解析
+
+**运行方式**: nightly 下可以直接运行验证(输出与 `05_custom_deserializer` 相同):
+
+```bash
+cargo +nightly run --example 05_expand
+```
+
+stable 下编译会失败(`#![feature]` 不允许),这是预期的 —— 它是**给人类读的
+参考文档**,不是常规示例。常规跑 demo 用原文件:
+
+```bash
+cargo run --example 05_custom_deserializer
+```
+
+重新生成快照(即 `lessons/demos/run.sh` 的内容):
+
+```bash
+cargo expand -p learn-serde-demos --example 05_custom_deserializer > lessons/demos/examples/05_expand.rs
+```
+
+(需要 nightly + 已安装 `cargo-expand`。)
+
+## 为什么每个复合类型生成两个 Visitor?
+
+在 `05_expand.rs` 里可以看到,`#[derive(Deserialize)]` 为每个复合类型生成
+**两个 Visitor**: `__FieldVisitor`(第 441 行)和 `__Visitor`(第 510 行)。
+struct、map、enum 无一例外。为什么?
+
+两个 Visitor 的职责不同,处理的 token 层级不同:
+
+| | `__Visitor`(主 Visitor) | `__FieldVisitor`(标识符 Visitor) |
+|--|--|--|
+| 处理什么 | **整个结构体/枚举**(一整段复合 token 流) | **单个字段名/变体名 token** |
+| 传给谁 | `deserialize_struct` / `deserialize_enum`(05_expand.rs:523, 789) | `deserialize_identifier`(05_expand.rs:503) |
+| 实现的方法 | `visit_map` / `visit_seq` / `visit_enum` | 只 `visit_str` / `visit_bytes` / `visit_u64` |
+| 产出 | 最终值 `User` / `Command` | `__Field` 枚举(`__field0`/`__field1`/`__ignore`) |
+
+原因:**反序列化是递归的,键也是"值"**。主 Visitor 的 visit_map 循环里:
+
+```rust
+while let Some(key) = map.next_key::<__Field>()? {   // ← 键也要反序列化!
+    // next_key 内部: __Field::deserialize(identifier_deserializer)
+    //    └─ 需要一个 Visitor 来处理键 token → __FieldVisitor
+    match key {
+        __Field::__field0 => { ... map.next_value()? ... }  // ← 值由主 Visitor 流程消费
+        ...
+    }
+}
+```
+
+而 Visitor 的协议是"**一个 Visitor 接收一种 token 流**":
+- 主 `__Visitor` 要接收 Map/Seq 整体 —— 整段键值对流
+- `__FieldVisitor` 只接收一个字符串/数字 token
+
+两类 token 形态不同,无法共用同一个 Visitor,所以必须成对生成。
+
+**嵌套会让 Visitor 变多**: 每个"容器层"都贡献一对 Visitor。例如 enum 的
+struct variant(05_expand.rs:1035-1109)的载荷又是一个 struct,又生成一对
+`__FieldVisitor` + `__Visitor`。一个含 struct variant 的 enum 展开后共有 4 个
+Visitor 定义:主 `__Visitor` + 主 `__FieldVisitor` + variant 的 `__Visitor` +
+variant 的 `__FieldVisitor`。
+
+---
+
 **练习**:
 1. 使用 `cargo expand` 展开一个简单的 derive 宏,观察生成的代码
 2. 在 `serde_derive/src/ser.rs` 中找到 `serialize_struct` 函数,理解字段循环的逻辑
