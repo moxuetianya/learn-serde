@@ -7,7 +7,8 @@
 - `demos/examples/12_access_nested.rs` — 复合类型嵌套的递归调用链(带追踪打印)
 
 **前置章节**: 第 2 章(数据模型)、第 3-8 章(Serialize/Deserialize/Visitor/Deserializer)、第 15 章(枚举)
-**扩展阅读**: `05_expand.rs`(derive 生成的真实代码)、`08_why_visitor.rs` 第 4 节(枚举格式侧)
+**扩展阅读**: `05_expand.rs`(derive 生成的真实代码)、`08_why_visitor.rs` 第 4 节(枚举格式侧)、
+第 22 章(`next_key_seed` / `next_value_seed` / `next_element_seed` 等 `*_seed` 的用法)
 
 ---
 
@@ -102,6 +103,13 @@ impl<'de> Deserialize<'de> for PointField {
 }
 ```
 
+**`__Field` 只在 visit_map 路径出场**: 它是 `next_key` 的键类型,而键只存在于
+键值对(对象)形状里。visit_seq 路径按位置取 `next_element`、没有字段名,
+**根本不会反序列化 `__Field`** —— 所以 bincode/CSV 输入走 visit_seq 时,这份
+代码一个字节都不执行。此外它的 Visitor 实现的是**标量入口** `visit_str`(JSON
+字段名必是字符串)、`visit_bytes` / `visit_u64`(二进制格式),而不是
+`visit_map` / `visit_seq` —— 键永远是单个标量 token,不可能遇到复合形状。
+
 为什么多此一举?
 1. **匹配更快更安全**: 枚举 match 替代字符串比较,编译器检查分支完备性;
 2. **未知字段报错正确**: `unknown_field` 自动附上"expected x or y";
@@ -175,8 +183,13 @@ impl Serialize for Point {
 | 键枚举 | 需要 `__Field` | 不需要 |
 | 形状约定 | `serialize_field`(自动字符串键) | `serialize_key` + `serialize_value`(任意键) |
 
-**但格式侧(JSON 等)把两者都当作"对象"**: 所以 `deserialize_struct` 和
-`deserialize_map` 最终都调用 `visitor.visit_map`。差异只在 `next_key` 的类型上。
+**为什么 struct 也走 visit_map?** 因为格式只有两种复合 token: 数组与对象。
+JSON 里 struct 就是对象 `{"x":1,"y":2}` —— serde_json 的 `deserialize_struct`
+和 `deserialize_map` 遇到 `{` 都只能给调用方一个 MapAccess,于是两者最终都调
+`visitor.visit_map`。struct 与 map 在 token 流层面**完全一样**,"类型名"只影响
+类型侧如何消费: struct 的键是编译期固定的字段名(由 `__Field` 校验),map 的键
+是任意 `Deserialize` 类型。差异只在 `next_key` 的类型上。
+(反过来, bincode/CSV 把 struct 表示成序列,同一份 struct 代码就会走 visit_seq。)
 
 ### 2.2 反序列化: deserialize_map → visit_map → next_entry
 
